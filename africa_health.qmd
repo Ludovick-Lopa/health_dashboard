@@ -1,0 +1,729 @@
+---
+title: "Africa Health (2010 - 2025)"
+format: dashboard
+theme: simplex
+editor_options: 
+  
+  chunk_output_type: console
+---
+
+```{r}
+#Load packages
+
+if(!require(pacman))install.packages("pacman")
+pacman::p_load(tidyverse, plotly, reactable, bslib, here,
+               bsicons, shiny, highcharter, rnaturalearth, 
+               countrycode, gapminder, sf, htmltools, scales, gganimate, 
+               reactable)
+```
+
+```{r}
+
+##### PHYSICIAN DENSITY ######
+
+# Download dataset on "physicians per 1000 people"
+medics <- 
+  read_csv(here("data/popula/medical_doctors_per_1000_people.csv")) %>% 
+  pivot_longer(cols = `1960`:`2023`,
+               names_to = c("Year"),
+               values_to = "count") %>% 
+   mutate(Year = as.integer(Year))
+
+
+# let's create world shapefile
+world_shape <- 
+  rnaturalearth::ne_countries()
+
+# add ISO codes
+medics_iso <- 
+  medics %>%
+  mutate(country_code = countrycode(name,
+                                    origin = "country.name",
+                                    destination = "iso3c"))
+
+# select the latest available year per country
+medics_latest <- 
+  medics_iso %>%
+  filter(!is.na(count)) %>% 
+  group_by(country_code) %>%
+  slice_max(order_by = Year, 
+            n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# join with world shapefile
+medica_joined <- 
+  world_shape %>%
+  left_join(medics_latest, by = c("adm0_a3" = "country_code")) %>%
+  filter(continent != "Antarctica")
+
+# build tooltip labels
+md_density_map <- 
+  medica_joined %>%
+  mutate(tooltip_label = paste0(sovereignt, " (", Year, "): ",
+                                ifelse(is.na(count), "No data", round(count, 2)))) %>%
+  
+# let's make the plot
+  ggplot() +
+  geom_sf(aes(fill = count, text = tooltip_label),
+          inherit.aes = FALSE) +
+  scale_fill_distiller(
+    palette = "RdYlBu",
+    na.value = "grey85",
+    limits = c(0, 9.6),
+    direction = 1) +
+  theme_void() +
+  theme(legend.position = "none",
+        plot.margin = margin(0, 0, 0, 0))
+
+# let's the plot it interactive
+md_density_plot <- 
+  ggplotly(md_density_map, tooltip = "text") %>%
+  layout(margin = list(l = 0, r = 0, t = 0, b = 0),
+         xaxis = list(visible = FALSE, showgrid = FALSE, zeroline = FALSE),
+         yaxis = list(visible = FALSE, showgrid = FALSE, zeroline = FALSE),
+         paper_bgcolor = "rgba(0,0,0,0)",
+         plot_bgcolor = "rgba(0,0,0,0)")
+
+```
+
+```{r}
+
+##### VALUE BOX PHYSICIAN DENSITY #####
+
+#### Highest density ####
+medics_2023 <- 
+  medics %>%
+  filter(Year == 2021)
+
+highest_density <- 
+ medics_2023 %>% 
+  arrange(-count) %>%
+  head(1) %>% 
+  pull(count) %>% 
+  round(2)
+
+highest_density_country <- 
+medics_2023 %>%
+  arrange(-count) %>%
+  head(1) %>%
+  pull(name)
+
+##### Lowest density ####
+medics_2014 <- 
+  medics %>%
+  filter(Year == 2014)
+
+lowest_density <- 
+ medics_2014 %>% 
+  arrange(count) %>%
+  head(1) %>% 
+  pull(count) %>% 
+  round(3)
+
+lowest_density_country <- 
+medics_2014 %>%
+  arrange(count) %>%
+  head(1) %>%
+  pull(name)
+
+```
+
+```{r}
+
+######## HEALTH SECTOR SPENDING AS % OF GDP #######
+
+### lets load the dataset
+gdp_capita2022 <- 
+  read_csv(here("data/economics/total_health_spending_percent_of_gdp.csv")) %>% 
+  pivot_longer(cols = `2000`:`2022`,
+               names_to = "Year",
+               values_to = "perc_gdp") %>% 
+  filter(Year==2022)
+
+
+### lets add ISO codes and continent information
+gdp_cap <- 
+  gdp_capita2022 %>% 
+  mutate(iso_codes  = countrycode(name, 
+                                  origin = "country.name", 
+                                  destination = "iso3c"),
+         continent = countrycode(name, 
+                                 origin = "country.name", 
+                                 destination = "continent"))
+
+### filter African countries
+gdp_cap_afr <- 
+  gdp_cap %>% 
+  filter(continent == "Africa")
+
+
+### highest spendors in africa health sector
+top10 <- 
+ gdp_cap_afr %>%
+  mutate(name = case_when(
+  name == "Central African Republic" ~ "Central A. Rep.",
+  TRUE ~ name
+  )) %>% 
+  arrange(desc(perc_gdp)) %>% 
+  head(10) %>% 
+  mutate(tooltip_label = paste(name, 
+                                 round(perc_gdp, 1),
+                                 sep = ": ")) %>% 
+  ggplot(aes(x = perc_gdp,
+              y = reorder(name,perc_gdp),
+              fill = perc_gdp,
+              text = tooltip_label)) +
+  geom_col() +
+  scale_fill_distiller(palette = "BuGn", 
+                       direction = 1,
+                       limits = c(0,14)) +
+  
+   theme_minimal () +
+   labs(y = " ",
+        x = "Healthcare spending (as % of GDP)") +
+   theme(legend.position = "none") 
+ 
+top10_plot <- 
+  ggplotly(top10, 
+           tooltip = "text")
+
+
+### lowest spendors in africa health sector
+low_10 <- 
+ gdp_cap_afr %>%
+  arrange(perc_gdp) %>% 
+  head(10) %>% 
+  mutate(tooltip_label = paste(name, 
+                                 round(perc_gdp, 1),
+                                 sep = ": ")) %>% 
+  ggplot(aes(x = perc_gdp,
+              y = reorder(name,perc_gdp),
+              fill = perc_gdp,
+              text = tooltip_label)) +
+  geom_col() +
+  scale_fill_distiller(palette = "RdYlBu",
+                       direction = 1) +
+  
+
+   theme_minimal () +
+   labs(y = " ",
+        x = "Healthcare spending (as % of GDP)") +
+   theme(legend.position = "none") 
+ 
+low10_plot <- 
+  ggplotly(low_10, 
+           tooltip = "text")
+
+
+### average investment across the continent
+aver_invest <- 
+ gdp_cap_afr %>% 
+  summarise(av_inv = mean(perc_gdp)) 
+
+
+
+```
+
+```{r}
+##### VALUE BOX HEALTH INVESTMENT #####
+
+#### Highest Spender ####
+
+highest_value <- 
+  gdp_cap_afr %>% 
+  arrange(-perc_gdp) %>%
+  head(1) %>% 
+  pull(perc_gdp) %>% 
+  round(1)
+
+highest_investor <- 
+gdp_cap_afr %>%
+  arrange(-perc_gdp) %>%
+  head(1) %>%
+  pull(name)
+
+##### Lowest Spender ####
+lowest_value <- 
+  gdp_cap_afr %>% 
+  arrange(perc_gdp) %>%
+  head(1) %>% 
+  pull(perc_gdp) %>% 
+  round(1)
+
+lowest_investor <- 
+gdp_cap_afr %>%
+  arrange(perc_gdp) %>%
+  head(1) %>%
+  pull(name)
+
+```
+
+
+```{r}
+##### HEALTH OUTCOMES ######
+
+
+#Dataset for bubble chart:
+  ## X-axis: Doctors per 1,000 people.
+  ## Y-axis: Health sector investment (% of GDP).
+  ## Bubble size (or colour): Maternal mortality rate.
+
+
+## Doctors per 1,000 people dataset
+# view(medics_latest)
+
+# add continent then filter africa
+medics_africa <- 
+  medics_latest %>% 
+  mutate(continent = countrycode(name, 
+                                 origin = "country.name", 
+                                 destination = "continent")) %>% 
+  filter(continent=="Africa")
+
+# view(medics_africa)
+
+
+## Y-axis: Health sector investment (% of GDP).
+# view(gdp_cap_afr)
+
+
+## load maternal mortality data
+
+global_mm <- 
+  read_csv(here(
+   "data/maternal/maternal_mortality_ratio_per_100000_live_births.csv")) %>%
+  pivot_longer(cols = `1800`:`2013`, 
+             names_to = "year",
+             values_to = "mortality_rate") %>% 
+  filter(year == 2013)
+                
+# view(global_mm)
+
+# add ISO codes and continent
+
+afri_mm <- 
+  global_mm %>% 
+  mutate(iso_codes  = countrycode(name, 
+                                  origin = "country.name", 
+                                  destination = "iso3c"),
+         continent = countrycode(name, 
+                                 origin = "country.name", 
+                                 destination = "continent")) %>% 
+  filter(continent == "Africa")
+
+
+# view(afri_mm)
+
+
+## join dataset
+
+# afri_mm
+# medics_africa
+# gdp_cap_afr
+
+
+# gdp + medics
+
+gdp_medics <- 
+  left_join(gdp_cap_afr, medics_africa,
+            by = c("iso_codes" = "country_code"))
+
+
+# view(gdp_medics)
+
+
+# gdp_medics + mm
+
+bubble_data <- 
+  left_join(gdp_medics, afri_mm,
+            by = "iso_codes")
+
+
+# view(bubble_data)
+
+
+##### lets plot a bubble chat ######
+##### NOTE: The years of the variables are different, but this serves for demonstration purposes as current data are lacking.
+
+
+# build tooltip labels
+bubble_plot <- 
+  bubble_data %>%
+ mutate(tooltip_label = paste0( name.x, ": ", 
+                               ifelse(is.na(mortality_rate), 
+                                      "NA", mortality_rate))) %>%
+  
+  ## lets create a plot
+  ggplot(aes(
+    x = count,
+    y = perc_gdp,
+    size = mortality_rate, 
+    color = name.x,   
+    text = tooltip_label
+  )) +
+  geom_point(alpha = 0.7) + 
+  scale_x_log10() +
+  theme_bw() +
+  labs(y = "Health Investment (as % of GDP)",
+        x = "Number of Doctors per 1,000 people")+
+  theme(legend.position = "none") 
+  
+  
+
+bubble_plot2 <- ggplotly(bubble_plot, tooltip = "text")
+
+
+```
+
+```{r}
+##### VALUE BOX MATERNAL MORTALITY RATE #####
+
+#### Highest MMR ####
+
+highest_value2 <- 
+  afri_mm %>% 
+  arrange(-mortality_rate) %>%
+  head(1) %>% 
+  pull(mortality_rate) %>% 
+  round(1)
+
+highest_country <- 
+afri_mm %>%
+  arrange(-mortality_rate) %>%
+  head(1) %>%
+  pull(name)
+
+##### Lowest Spender ####
+lowest_value2 <- 
+  afri_mm %>% 
+  arrange(mortality_rate) %>%
+  head(1) %>% 
+  pull(mortality_rate) %>% 
+  round(1)
+
+lowest_country <- 
+afri_mm %>%
+  arrange(mortality_rate) %>%
+  head(1) %>%
+  pull(name)
+```
+
+
+
+
+
+# Physicians Density
+
+## Row 1 {height="15%"}
+
+```{r}
+
+value_box(
+  title = "Highest Physician Density",
+  value = tags$span(
+    paste0(highest_density, " per 1,000 people (", highest_density_country, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("award"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-cyan"   # cyan theme
+)
+
+
+```
+
+```{r}
+
+value_box(
+  title = "Lowest Physician Density",
+  value = tags$span(
+    paste0(lowest_density, " per 1,000 people (", lowest_density_country, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("card-list"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-pink"
+)
+
+```
+
+### {width="30%"}
+
+```{r}
+
+value_box(
+  title = "Insights from",
+  value = tags$span(
+    paste0("Global Physicians Density"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("chat-square-quote"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-dark"
+)
+
+```
+
+
+## Row 2 {height="85%"}
+
+###  {width="71.1%"}
+
+```{r title = "**Global Physicians Density: How African Countries Compares**"}
+
+md_density_plot
+
+```
+
+###  {width="29.9%" height="55%"}
+
+
+
+
+```{=html}
+
+<style>
+
+.custom-card {
+  background: 	#ffbaba;
+  border-left: 6px solid #555555;
+  border-radius: 10px;
+  padding: 20px;
+}
+.custom-card li {
+  margin-bottom: 12px;
+}
+
+</style>
+
+```
+
+::: {.card .custom-card padding="3px" expendable="false" fill="false"}
+
+- Africa has the lowest number of medical doctors per 1,000 people in the world.
+
+- Countries in South and Southeast Asia also record lower Physician densities. 
+
+- Physician density is strongly linked to economy. 
+    - Countries with higher GDP per capita tend to have more doctors per 1,000 people.
+
+
+:::
+
+
+# Health Investment
+
+## Row 1 {height="15%"}
+
+```{r}
+
+value_box(
+  title = "Highest Investor",
+  value = tags$span(
+    paste0(highest_value, "% of GDP (", highest_investor, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("currency-dollar"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-cyan"   
+)
+
+
+```
+
+```{r}
+
+value_box(
+  title = "Lowest Investor",
+  value = tags$span(
+    paste0(lowest_value, "% of GDP (", lowest_investor, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("currency-euro"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-pink"   
+)
+
+```
+
+```{r}
+
+value_box(
+  title = "Health Financing",
+  value = tags$span(
+    paste0("Insights from Africa"),
+    style = "font-size: 18px;"),
+  showcase = tags$span(
+    bsicons::bs_icon("sun"),
+    style = "font-size: 12px;"),
+  theme = "bg-dark")
+
+```
+
+## Row 2 {height="85%"}
+
+###  {width="35%"}
+
+```{r title = "**Health Investment (2022): Top Spenders**"}
+
+top10_plot
+
+```
+
+###  {width="35%"}
+
+```{r title = "**Health Investment (2022): Lowest Spenders**"}
+
+low10_plot
+
+```
+
+###  {width="35%" height="55%"}
+
+```{=html}
+
+<style>
+
+.custom-card {
+  background: 	#fdf5e6;
+  border-left: 6px solid #555555;
+  border-radius: 10px;
+  padding: 15px;
+}
+.custom-card li {
+  margin-bottom: 12px;
+}
+</style>
+
+```
+
+::: {.card .custom-card padding="3px" expendable="false" fill="false"}
+
+- No African country allocates 15% of GDP to health, despite widespread ratification of the Abuja Declaration (2001)
+
+- On average, African nations invest only 5.5% of GDP in the health sector, leaving major funding gaps.
+
+- How does this investment pattern influence health outcomes such as maternal and child care or life expectancy across African countries?
+
+:::
+
+
+# Health Outcomes
+
+## Row 1 {height="15%"}
+
+```{r}
+
+value_box(
+  title = "Highest MMR",
+  value = tags$span(
+    paste0(highest_value2, " (", highest_country, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("person-wheelchair"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-cyan"   # cyan theme
+)
+
+
+```
+
+```{r}
+
+value_box(
+  title = "Lowest MMR",
+  value = tags$span(
+    paste0(lowest_value2, " (", lowest_country, ")"),
+    style = "font-size: 18px;"
+  ),
+  showcase = tags$span(
+    bsicons::bs_icon("person-standing-dress"),
+    style = "font-size: 12px;"
+  ),
+  theme = "bg-pink"   # cyan theme
+)
+
+```
+
+```{r}
+
+value_box(
+  title = "Health System",
+  value = tags$span(
+    paste0("Strengthening Priorities"),
+    style = "font-size: 18px;"),
+  showcase = tags$span(
+    bsicons::bs_icon("bricks"),
+    style = "font-size: 12px;"),
+  theme = "bg-dark")
+
+```
+
+## Row 2 {height="85%"}
+
+###  {width="70%"}
+
+```{r title = "**Maternal Mortality Rate (Deaths per 100,000 Live Births)**"}
+
+bubble_plot2
+
+```
+
+
+###  {width="30%" height="55%"}
+
+```{=html}
+
+<style>
+
+.custom-card {
+  background: 	#fdf5e6;
+  border-left: 6px solid #555555;
+  border-radius: 10px;
+  padding: 15px;
+}
+.custom-card li {
+  margin-bottom: 12px;
+}
+</style>
+
+```
+
+::: {.card .custom-card padding="3px" expendable="false" fill="false"}
+
+- Investing in the health workforce directly improves both access to quality care and health outcomes.
+
+    - As doctor density rises, maternal deaths fall — regardless of GDP share invested.
+
+- Governments should prioritize equitable workforce distribution to reduce urban–rural disparities in healthcare access.
+
+
+
+:::
+
+
+# About
+
+**Who I am**
+
+I am a trained Global Health professional with a strong interest in using data to inform policy decisions and communicate insights effectively. This dashboard reflects my commitment to continuous learning in data analytics and serves as a capstone project from the GraphCourses Network masterclass. To learn more about similar training and mentorship opportunities, visit: [GraphCourses Network](https://thegraphcourses.org/)
+
+For more of my work, thought leadership, and professional engagements, connect with me on [My LinkedIn](https://www.linkedin.com/in/ludovick-l-lopa-md-mph-5b8921b2/)
+
+**Data Source**
+
+This dashboard uses the most recent Gapminder datasets on physician density, maternal health, healthcare expenditure, and perinatal outcomes. The focus is on African countries, with the analysis guided by one central question: Does greater investment in healthcare translate into better health outcomes?
+
+-   All data are publicly available and can be accessed at: [Gapminder Data](https://www.gapminder.org/data/)
